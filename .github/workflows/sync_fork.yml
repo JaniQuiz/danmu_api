@@ -18,12 +18,14 @@ jobs:
             - name: Checkout target repo
               uses: actions/checkout@v4
               with:
-                token: ${{ secrets.GITHUB_TOKEN }}
+                # 使用刚刚配置的 PAT 替换默认 token
+                token: ${{ secrets.SYNC_PAT }}
 
             - name: Sync Upstream
               uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
               with:
-                  target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+                  # 这里也要替换成你的 PAT
+                  target_repo_token: ${{ secrets.SYNC_PAT }}
                   upstream_sync_repo: huangxd-/danmu_api
                   upstream_sync_branch: main
                   target_sync_branch: main
