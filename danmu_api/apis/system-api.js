@@ -3,6 +3,7 @@ import { jsonResponse } from "../utils/http-util.js";
 import { HTML_TEMPLATE } from "../ui/template.js";
 import { formatLogMessage, log } from "../utils/log-util.js";
 import { HandlerFactory } from "../configs/handlers/handler-factory.js";
+import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
 
 export function handleUI() {
   return new Response(HTML_TEMPLATE.replace("globals.currentToken", globals.currentToken), {
@@ -76,7 +77,7 @@ export function handleConfig(hasPermission = false) {
     originalEnvVars: originalEnvVars, // 系统设置使用原始环境变量（已脱敏）
     hasAdminToken: hasAdminToken, // 添加admin token配置状态
     repository: "https://github.com/huangxd-/danmu_api.git",
-    description: "一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔咪人韩巴狐乐西埋帆弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/claw等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。",
+    description: "一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔咪人韩巴狐乐西埋帆弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/hf等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。",
     notice: "本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。有问题提issue或私信机器人都ok，TG MSG ROBOT: [https://t.me/ddjdd_bot]; 推荐加互助群咨询，TG GROUP: [https://t.me/logvar_danmu_group]; 关注频道获取最新更新内容，TG CHANNEL: [https://t.me/logvar_danmu_channel]。"
   });
 }
@@ -171,6 +172,20 @@ export async function handleClearCache() {
     globals.searchCache = new Map();
     globals.commentCache = new Map();
     globals.requestHistory = new Map();
+
+    try {
+      // 清理 Bangumi-Data 内存与磁盘缓存
+      clearBangumiDataCache(true);
+      
+      // 触发异步数据重载
+      if (globals.useBangumiData) {
+        initBangumiData(globals.deployPlatform, false).catch(e => {
+          log("warn", `[server] Bangumi-Data background reload failed: ${e.message}`);
+        });
+      }
+    } catch (e) {
+      log("error", `[server] Failed to clear Bangumi-Data cache: ${e.message}`);
+    }
     
     log("info", `[server] Memory cache cleared successfully`);
     
@@ -251,3 +266,51 @@ export function handleReqRecords() {
   return jsonResponse({ records, todayReqNum }, 200);
 }
 
+/**
+ * 处理获取最近 animes 缓存列表的请求
+ * @returns {Response} 包含格式化后番剧及子源集数的 JSON 响应
+ */
+export function handleCacheAnimes() {
+  try {
+    const localAnimes = [...(globals.animes || [])].reverse();
+
+    // 1. 预构建一个全局映射字典，提升查找效率
+    const fullAnimeMap = new Map();
+    localAnimes.forEach(a => {
+      if (a?.source && a?.animeId) {
+        fullAnimeMap.set(`${a.source}_${a.animeId}`, a);
+      }
+    });
+
+    // 2. 视图层数据适配
+    const formattedData = localAnimes
+      .filter(anime => !anime.isHiddenChild)
+      .map(anime => {
+        // 兼容实体类与普通对象
+        const animeJson = typeof anime.toJson === 'function' ? anime.toJson() : { ...anime };
+        const { links = [], mergedChildren = [], ...rest } = animeJson;
+
+        return {
+          ...rest,
+          episodes: rest.episodeCount || rest.episodes || 1,
+          links,
+          mergedChildren: mergedChildren.map(child => {
+            const fullChild = fullAnimeMap.get(`${child.source}_${child.animeId}`);
+            const fullChildJson = typeof fullChild?.toJson === 'function' ? fullChild.toJson() : fullChild;
+            const fullLinks = (fullChildJson?.links?.length > 0) ? fullChildJson.links : (child.links || []);
+
+            return {
+              ...child,
+              episodes: child.episodeCount || child.episodes || 1,
+              links: fullLinks 
+            };
+          })
+        };
+      });
+
+    return jsonResponse({ success: true, data: formattedData }, 200);
+  } catch (error) {
+    log("error", `[server] Fetch cache animes failed: ${error.message}`);
+    return jsonResponse({ success: false, message: `获取缓存失败: ${error.message}` }, 500);
+  }
+}
